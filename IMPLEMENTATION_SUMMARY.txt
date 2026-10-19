@@ -1,0 +1,79 @@
+IMPLEMENTATION SUMMARY
+=====================
+
+Rust/Soroban Contract Roadmap
+-----------------------------
+
+This roadmap replaces the previous Starknet/Cairo contract deliverables. All
+contract work targets Rust compiled to Soroban WASM on Stellar. Cairo/Starknet
+items are removed from the active roadmap; any remaining references are
+historical only and are not deliverables.
+
+Milestone 0 - Toolchain and Workspace Baseline
+  Scope: Rust workspace, soroban-sdk pinning, shared crate layout, CI build of
+  WASM artifacts, and local testnet harness.
+  Dependencies: none.
+  Definition of done: workspace builds reproducibly; `cargo test` passes for
+  all contract crates; a contract deploys to a local Soroban testnet from CI.
+  Testnet gate: local testnet deploy succeeds before any milestone below starts.
+
+Milestone 1 - Registry Contract
+  Scope: on-chain registry of issuers, assets, and metadata pointers.
+  Dependencies: Milestone 0.
+  Definition of done: registry contract exposes create/update/query entry
+  points; storage keys and auth rules documented; unit and integration tests
+  cover happy path and unauthorized writes.
+  Testnet gate: registry deployed to Stellar testnet; create/update/query
+  verified against the deployed contract ID.
+
+Milestone 2 - Wallet Contract
+  Scope: wallet contract for custody, signing authorization, and balance
+  accounting tied to registry identities.
+  Dependencies: Milestone 1 (issuer/asset identity resolution).
+  Definition of done: wallet entry points for deposit, withdraw, and transfer
+  with explicit auth checks; events emitted for each state change; tests cover
+  replay and unauthorized access.
+  Testnet gate: wallet deployed to testnet and exercised end-to-end against the
+  deployed registry.
+
+Milestone 3 - Escrow Contract
+  Scope: escrow contract for conditional release between wallet parties.
+  Dependencies: Milestone 2 (wallet balances and auth).
+  Definition of done: escrow create/fund/release/refund entry points; timeout
+  and dispute paths defined; tests cover release, refund, and expired escrow.
+  Testnet gate: escrow flow executed on testnet between two wallets with a
+  successful release and a successful refund.
+
+Milestone 4 - SDK
+  Scope: Rust/Soroban client SDK wrapping registry, wallet, and escrow
+  contracts with typed bindings.
+  Dependencies: Milestones 1-3 (stable contract interfaces).
+  Definition of done: SDK exposes typed calls for every public entry point;
+  integration tests run against testnet contract IDs; versioning policy
+  documented.
+  Testnet gate: SDK integration suite passes against deployed testnet
+  contracts before indexer work begins.
+
+Milestone 5 - Indexer
+  Scope: indexer consuming contract events into a queryable store.
+  Dependencies: Milestone 4 (SDK event types) and Milestones 1-3 (event
+  schemas).
+  Definition of done: indexer ingests registry, wallet, and escrow events;
+  reorg/backfill handling documented; tests cover event decoding and replay.
+  Testnet gate: indexer reaches parity with testnet event history for all three
+  contracts.
+
+Milestone 6 - Deployment
+  Scope: production deployment pipeline, contract upgrade boundaries, and
+  release process.
+  Dependencies: Milestones 1-5.
+  Definition of done: deployment runbook; upgrade boundaries documented per
+  contract; rollback procedure tested; release artifacts signed and versioned.
+  Testnet gate: full stack (registry, wallet, escrow, SDK, indexer) deployed to
+  testnet and validated before mainnet promotion.
+
+Migration Boundaries
+  - Cairo/Starknet contracts are out of scope and receive no further work.
+  - No cross-chain bridge between Cairo and Soroban contracts is planned.
+  - Existing off-chain consumers must migrate to the SDK (Milestone 4) before
+    the indexer (Milestone 5) is considered complete.

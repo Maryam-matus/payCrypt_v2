@@ -1,291 +1,179 @@
-# Contributing to Tagged
-
-Thank you for your interest in contributing to Tagged! This document provides guidelines for contributing to the project.
-
-## Development Setup
-
-### Prerequisites
-- Node.js >= 18.0.0
-- npm >= 9.0.0
-- PostgreSQL >= 14
-- Redis >= 6
-
-### Getting Started
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/llinsss/payCrypt_v2.git
-   cd payCrypt_v2
-   ```
-
-2. **Install dependencies**
-   ```bash
-   # Frontend
-   npm install
-   
-   # Backend
-   cd backend
-   npm install
-   ```
-
-3. **Set up environment variables**
-   ```bash
-   # Frontend
-   cp .env.example .env
-   
-   # Backend
-   cd backend
-   cp .env.example .env
-   ```
-
-4. **Set up database**
-   ```bash
-   cd backend
-   npm run migrate
-   ```
-
-5. **Start development servers**
-   ```bash
-   # Terminal 1: Frontend
-   npm run dev
-   
-   # Terminal 2: Backend
-   cd backend
-   npm run dev
-   ```
-
-### Quick Start with Docker
-
-Prefer not to install PostgreSQL/Redis locally? The full backend stack —
-Postgres, Redis, and the backend API with hot reload — runs with a single
-command:
-
-```bash
-cp backend/.env.example backend/.env
-docker-compose up
-```
-
-This will:
-- Start PostgreSQL 14 and Redis 7 with health checks
-- Build and start the backend with `nodemon`, bind-mounted so file changes
-  reload automatically — no rebuild needed
-- Run pending database migrations automatically on backend startup
-- Expose the API at `http://localhost:3000`
-- Expose Bull Board (queue admin UI) at
-  `http://localhost:3001/admin/running-queues` (basic auth: `BULL_ADMIN_USER`
-  / `BULL_ADMIN_PASS` from `backend/.env`)
-
-To stop everything: `docker-compose down` (add `-v` to also drop the
-Postgres/Redis volumes and start from a clean database).
-
-## Code Standards
-
-### JavaScript/TypeScript
-- Use ES6+ features
-- Follow ESLint configuration
-- Use meaningful variable names
-- Add comments for complex logic
-- Keep functions small and focused
-
-### Commits
-- Use conventional commit messages:
-  - `feat:` New features
-  - `fix:` Bug fixes
-  - `docs:` Documentation changes
-  - `style:` Code style changes
-  - `refactor:` Code refactoring
-  - `test:` Test additions/changes
-  - `chore:` Build/tooling changes
-
-### Pull Requests
-1. Create a feature branch from `master`
-2. Make your changes
-3. Write/update tests
-4. Ensure all tests pass
-5. Update documentation
-6. Submit PR with clear description
-
-### Safe Knex Query Patterns
-
-Knex parameterises the query builder for you, so ordinary calls are already safe:
-
-```js
-db("transactions").where("user_id", userId);          // safe — bound automatically
-```
-
-The `raw` family is different: it takes SQL as text. Interpolating a value into
-that text reintroduces SQL injection regardless of how safe the rest of the
-query is.
-
-```js
-// Never do this — userId is concatenated straight into the SQL.
-db.raw(`SELECT * FROM transactions WHERE user_id = ${userId}`);
-
-// Do this — the value is bound, and the driver escapes it.
-db.raw("SELECT * FROM transactions WHERE user_id = ?", [userId]);
-```
-
-The same applies to every text-taking method: `whereRaw`, `orWhereRaw`,
-`havingRaw`, `groupByRaw`, `orderByRaw`, `joinRaw`.
-
-```js
-// Bindings work in these too.
-query.groupByRaw("DATE_TRUNC(?, created_at)", [period]);
-```
-
-**Identifiers cannot be bound.** Bindings replace *values*, not table or column
-names, so a dynamic column has to be validated instead. Check it against an
-allow-list and never pass request input through:
-
-```js
-const SORTABLE = { created: "created_at", amount: "usd_value" };
-const column = SORTABLE[req.query.sortBy] ?? "created_at";  // allow-list
-query.orderByRaw(`${column} DESC`); // check-raw-sql-allow: column is allow-listed above
-```
-
-A template literal with no `${}` in it is just a string and is perfectly fine —
-multi-line SQL is often clearer that way.
-
-#### Automated check
-
-`backend/scripts/check-raw-sql.js` fails on interpolated raw SQL. Run it any
-time:
-
-```bash
-cd backend && npm run check:raw-sql
-```
-
-To have it run before every commit, enable the committed hooks once per clone:
-
-```bash
-git config core.hooksPath .githooks
-```
-
-Migrations, seeds and one-off scripts are excluded — they build DDL from trusted
-local input, never from request data. If you have a genuinely safe interpolation
-that the check flags, add a `check-raw-sql-allow` comment on that line stating
-why it is safe.
-
-## Continuous Integration
-
-Every pull request is gated on a single required status check:
-
-```
-ci/required-checks
-```
-
-This check runs unconditionally on every PR and aggregates four component
-pipelines. You only ever need to watch this one name in the branch-protection
-UI.
-
-### Component checks
-
-| Check name | Triggered by | What runs |
-|---|---|---|
-| `ci/web` | `src/**`, shared config | lint, typecheck, vite build |
-| `ci/backend` | `backend/**` | lint, npm audit (high+critical), jest |
-| `ci/sdk` | `packages/**`, shared config | lint, typecheck, tsup build |
-| `ci/contracts` | `contracts/**` | solhint, forge build+test, slither, snforge |
-
-> **Shared-config fan-out** — `tsconfig*.json` and `eslint.config.js` are
-> shared between the web frontend and both SDK packages, so changing them
-> triggers `ci/web` **and** `ci/sdk`.
-
-### Security gates
-
-- `ci/backend` — `npm audit --audit-level=high` fails the PR on HIGH or CRITICAL
-  CVEs in backend dependencies.
-- `ci/contracts` — Slither static analysis runs with `--fail-high`; any HIGH or
-  CRITICAL finding blocks the merge.
-
-### Workflow files
-
-```
-.github/workflows/
-├── web-ci.yml          ← Web lint · typecheck · build
-├── backend-ci.yml      ← Backend lint · audit · test
-├── sdk-ci.yml          ← SDK lint · typecheck · build (matrix)
-├── contracts-ci.yml    ← Contracts solhint · forge · slither · snforge
-├── required-checks.yml ← Gate — exposes ci/required-checks
-├── flutter-ci.yml      ← Mobile (Flutter) — separate, not part of gate
-└── docker-build.yml    ← Docker image push (push to master only)
-```
-
-See **[docs/ci.md](docs/ci.md)** for the full reference: path-trigger tables,
-per-step detail, tool versions, local equivalents, and artifact retention.
-
-### Running CI checks locally
-
-```bash
-# Web
-npm ci && npm run lint && npm run type-check && npm run build
-
-# Backend
-cd backend && npm ci && npm run lint && npm audit --audit-level=high && npm test
-
-# SDK (@tagged/sdk)
-cd packages/sdk && npm ci && npm run lint && npm run typecheck && npm run build
-
-# SDK (@tagged/stellar-sdk)
-cd packages/stellar-sdk && npm ci && npm run lint && npm run typecheck && npm run build
-
-# Contracts — Solidity
-cd contracts/solidity_contract
-solhint 'src/**/*.sol' && forge build && forge test -vvv
-slither . --exclude-dependencies --filter-paths "lib/" --fail-high
-
-# Contracts — StarkNet
-cd contracts/starknet_contract && scarb build && snforge test
-```
-
-## Project Structure
-
-```
-payCrypt_v2/
-├── backend/          # Node.js/Express API
-├── src/              # React frontend
-├── contracts/        # Smart contracts
-├── packages/         # Shared packages
-└── docs/             # Documentation
-```
-
-## Testing
-
-### Backend Testing
-
-Tests are split into unit and integration suites (see `backend/TESTING.md` for details).
-
-**Unit Tests** (no database required — fast)
-```bash
-cd backend
-npm run test:unit
-```
-
-**Integration Tests** (requires PostgreSQL — see CONTRIBUTING.md setup)
-```bash
-cd backend
-export DATABASE_URL="postgres://taggedpay_user:taggedpay_password@localhost:5432/paycrypt_test"
-npm run test:integration
-```
-
-**All Tests** (legacy)
-```bash
-cd backend
-npm run test
-```
-
-### Frontend Testing
-
-```bash
-npm run test
-```
-
-## Questions?
-
-- Open an issue for bugs
-- Start a discussion for questions
-- Check existing documentation
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the project's license.
+# Contributing
+
+Thanks for your interest in contributing! This document covers the basics of
+working in this repository.
+
+## Getting started
+
+1. Fork and clone the repository.
+2. Install the toolchain pinned in `rust-toolchain.toml`.
+3. Run the test suite before opening a pull request.
+
+## Tag normalization security assumptions
+
+Tags are user-supplied identifiers that are stored, indexed, and compared by the
+contract. Because Unicode contains many visually identical or semantically
+equivalent sequences, the contract applies a strict, documented normalization
+and confusable policy so that clients and indexers can reason about tag
+identity deterministically.
+
+### Accepted Unicode subset
+
+- Tags are restricted to a conservative, ASCII-first subset: letters `A-Z`
+  `a-z`, digits `0-9`, and the separators `-` and `_`.
+- Any codepoint outside this subset is rejected. This includes combining marks,
+  zero-width characters, bidirectional control characters, and non-ASCII
+  scripts. Rejecting them up front avoids homoglyph and invisible-character
+  attacks that would otherwise require a full confusables table.
+- Tags must be non-empty and within the configured maximum length. Length is
+  measured in Unicode scalar values after normalization.
+
+### Normalization form
+
+- Tags are normalized to **NFC** (Canonical Composition) before validation,
+  storage, and comparison. Normalization happens once, at the contract entry
+  point, so every downstream read/write path observes the same canonical form.
+- Because the accepted subset is ASCII-only, NFC is effectively a no-op for
+  valid tags; it exists to make the rejection of non-ASCII input explicit and to
+  keep behavior stable if the subset is ever widened.
+- Clients should pre-normalize to NFC before sending a tag. Sending an
+  already-NFC tag is always safe; sending a non-NFC tag that normalizes into the
+  accepted subset is accepted, and the stored value is the NFC form.
+
+### Confusable / skeleton policy
+
+- The contract does not maintain a confusables table. Instead, it relies on the
+  ASCII-only subset above: any codepoint that could be confused with an ASCII
+  character (Cyrillic `а`, Greek `ο`, fullwidth forms, etc.) is rejected because
+  it is not in the subset.
+- This is a deliberate trade-off: a small, auditable allowlist is easier to
+  reason about than a large confusables database, and it keeps per-invocation
+  work bounded (no table lookups, no unbounded normalization passes).
+- Case is preserved as sent; the contract does not case-fold tags. Clients that
+  need case-insensitive matching must normalize case themselves and document
+  that choice.
+
+### Compatibility implications for clients
+
+- Send tags as ASCII `[A-Za-z0-9_-]+`. Anything else is rejected with the
+  contract's invalid-tag error.
+- Pre-normalize to NFC if you generate tags from user input; the contract will
+  normalize again, but doing it client-side keeps error messages predictable.
+- Do not rely on case-insensitive uniqueness. `Foo` and `foo` are distinct tags.
+- If a tag is rejected, treat it as a client-side validation failure rather than
+  a transient error; retrying the same input will not succeed.
+
+## Pull requests
+
+- Keep changes focused; one logical change per pull request.
+- Add tests for new behavior, including boundary and failure cases.
+- Update documentation when externally visible behavior changes.
+
+Local-network tests must be reproducible. Use the shared fixtures to pin the
+ledger sequence, timestamp, and network passphrase instead of relying on wall
+clock time or the ambient network:
+
+- Set the ledger sequence and timestamp explicitly before each scenario.
+- Advance ledger/time only through the fixture helpers so runs are repeatable.
+- Assert on exact error codes and emitted events, not on timing.
+
+## Registry contract: events and storage
+
+This section is the canonical reference for the registry contract's externally
+visible contract: the tag keys it stores, how versions are assigned and
+compared, the events it emits, and what an indexer must do to reconstruct
+registry state from those events. Treat it as the source of truth when changing
+storage layout or event payloads.
+
+### Canonical tag keys
+
+Tags are addressed by a canonical, normalized key so that logically identical
+tags always resolve to the same storage entry:
+
+- **Normalization** — keys are lowercased and trimmed of surrounding
+  whitespace before use. Callers must not rely on case or padding to
+  distinguish tags.
+- **Encoding** — a tag key is stored as a `Symbol`/`String` under the registry
+  data key namespace, prefixed by the registry's storage key enum so tag
+  entries never collide with configuration or ownership entries.
+- **Uniqueness** — the normalized key is the primary identity of a tag. Two
+  inputs that normalize to the same key refer to the same tag and share its
+  version history.
+- **Reserved keys** — keys reserved for contract configuration (for example
+  admin/owner entries) are not valid tag keys and are rejected.
+
+### Version semantics
+
+Each tag carries a monotonically increasing version:
+
+- **Assignment** — the first registration of a tag key starts at version `1`.
+  Every subsequent successful update to that key increments the version by
+  exactly one. Versions are never reused or decremented.
+- **Comparison** — versions are compared as unsigned integers. A higher version
+  is strictly newer; equal versions denote the same revision. Consumers should
+  treat a lower version as stale and ignore it.
+- **Evolution** — updates are append-only with respect to history: the current
+  version is overwritten in place, while prior versions remain observable only
+  through the emitted events (see below). There is no in-storage version list,
+  which keeps per-invocation work and storage growth bounded.
+- **Concurrency** — because versions are assigned inside the contract, the
+  ledger ordering of invocations defines the authoritative version sequence;
+  callers must not assume a version they computed off-chain will be accepted.
+
+### Event topics
+
+The registry emits events with a stable topic layout so indexers can filter
+without decoding payloads:
+
+- **Topic 0** — the contract/registry identifier.
+- **Topic 1** — the event kind, one of the registry lifecycle kinds (for
+  example `register`, `update`, `transfer`, `remove`).
+- **Topic 2** — the canonical tag key affected by the event.
+- **Data** — the event payload, containing at minimum the new version and the
+  values needed to reconstruct the entry (owner/authority and the stored
+  value).
+
+Event kinds and their payload fields are part of the public interface: adding a
+kind or changing a payload field is a breaking change for indexers and must be
+documented in the pull request.
+
+### Indexer reconstruction requirements
+
+An indexer can rebuild registry state from the event stream alone. To do so it
+must:
+
+- **Track the latest version per key** — apply events in ledger order and keep
+  the highest version seen for each canonical tag key; discard out-of-order or
+  duplicate deliveries whose version is not greater than the stored one.
+- **Apply only successful events** — failed invocations emit no state-changing
+  events, so the indexer must not synthesize entries from error paths.
+- **Reconstruct entries from payloads** — each event payload must contain
+  enough data (owner/authority, value, version) to rebuild the entry without
+  reading contract storage.
+- **Handle removals** — a removal event tombstones the key; the indexer should
+  drop the entry while retaining the last version for ordering checks.
+- **Be idempotent and replay-safe** — reprocessing the same ledger range must
+  converge to the same state, since events may be delivered more than once.
+
+## Migration, indexing, monitoring, and rollback
+
+Changes that touch storage layout, contract interfaces, or authorization rules
+should document their operational impact in the pull request description:
+
+- **Migration** — describe any state migration, its idempotency, and how it is
+  applied to existing deployments.
+- **Indexing** — note any new or changed events/keys that downstream indexers
+  must consume, including their schema.
+- **Monitoring** — list the metrics, logs, or alerts that should be watched
+  after rollout, and the expected healthy values.
+- **Rollback** — explain how to revert safely, including whether the migration
+  is reversible and what happens to data written by the new version.
+
+## Submitting changes
+
+1. Create a topic branch from `main`.
+2. Keep commits focused and write clear commit messages.
+3. Ensure `cargo test --workspace` (and the local-network suite when relevant)
+   passes.
+4. Open a pull request describing the change, the tests you added, and any
+   migration/monitoring/rollback considerations from the section above.
